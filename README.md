@@ -121,4 +121,4 @@ GOOS=darwin GOARCH=amd64 go build -o clitools-darwin-amd64 .
 
 ## License
 
-[Add your license here]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
