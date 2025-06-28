@@ -50,6 +50,7 @@ Optimize an image by cropping transparent areas and converting to WebP:
 **Supported input formats:**
 - PNG
 - JPEG/JPG
+- SVG (vector graphics - rasterized to bitmap)
 - Other formats supported by Go's image package
 
 **Output format:**
@@ -63,6 +64,9 @@ Optimize an image by cropping transparent areas and converting to WebP:
 
 # Optimize a JPEG photo
 ./clitools image optimize photo.jpg photo-optimized.webp --quality 85
+
+# Convert SVG to optimized WebP (rasterized)
+./clitools image optimize icon.svg icon-optimized.webp --quality 90
 
 # The tool will automatically add .webp extension if not provided
 ./clitools image optimize input.png output

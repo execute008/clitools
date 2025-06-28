@@ -3,14 +3,18 @@ package image
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/kolesa-team/go-webp/encoder"
 	"github.com/kolesa-team/go-webp/webp"
+	"github.com/srwiley/oksvg"
+	"github.com/srwiley/rasterx"
 )
 
 type Processor struct{}
@@ -21,16 +25,59 @@ func NewProcessor() *Processor {
 
 // OptimizeImage crops transparent areas and converts to WebP format
 func (p *Processor) OptimizeImage(inputPath, outputPath string, quality float32) error {
-	// Open and decode input image
-	inputFile, err := os.Open(inputPath)
-	if err != nil {
-		return fmt.Errorf("failed to open input file: %w", err)
-	}
-	defer inputFile.Close()
+	var img image.Image
+	var err error
 
-	img, _, err := image.Decode(inputFile)
-	if err != nil {
-		return fmt.Errorf("failed to decode image: %w", err)
+	// Check if input is SVG
+	if strings.ToLower(filepath.Ext(inputPath)) == ".svg" {
+		img, err = p.loadSVG(inputPath)
+		if err != nil {
+			return fmt.Errorf("failed to load SVG: %w", err)
+		}
+	} else {
+		// Open and decode regular image formats
+		inputFile, err := os.Open(inputPath)
+		if err != nil {
+			return fmt.Errorf("failed to open input file: %w", err)
+		}
+		defer inputFile.Close()
+
+		img, _, err = image.Decode(inputFile)
+		if err != nil {
+			return fmt.Errorf("failed to decode image: %w", err)
+		}
+	}
+
+	// Crop transparent areas
+	croppedImg := p.cropTransparentAreas(img)
+	
+	// Convert to WebP and save
+	return p.saveAsWebP(croppedImg, outputPath, quality)
+}
+
+// OptimizeImageWithScale crops transparent areas and converts to WebP format with configurable SVG scaling
+func (p *Processor) OptimizeImageWithScale(inputPath, outputPath string, quality, svgScale float32) error {
+	var img image.Image
+	var err error
+
+	// Check if input is SVG
+	if strings.ToLower(filepath.Ext(inputPath)) == ".svg" {
+		img, err = p.loadSVGWithScale(inputPath, svgScale)
+		if err != nil {
+			return fmt.Errorf("failed to load SVG: %w", err)
+		}
+	} else {
+		// Open and decode regular image formats
+		inputFile, err := os.Open(inputPath)
+		if err != nil {
+			return fmt.Errorf("failed to open input file: %w", err)
+		}
+		defer inputFile.Close()
+
+		img, _, err = image.Decode(inputFile)
+		if err != nil {
+			return fmt.Errorf("failed to decode image: %w", err)
+		}
 	}
 
 	// Crop transparent areas
@@ -127,8 +174,169 @@ func (p *Processor) saveAsWebP(img image.Image, outputPath string, quality float
 	return nil
 }
 
-// LoadImage loads an image from file, supporting various formats
+// loadSVG loads and rasterizes an SVG file to an image
+func (p *Processor) loadSVG(path string) (image.Image, error) {
+	// Read SVG file
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open SVG file: %w", err)
+	}
+	defer file.Close()
+
+	// Read file content
+	svgData, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read SVG file: %w", err)
+	}
+
+	fmt.Printf("Loading SVG: %d bytes\n", len(svgData))
+
+	// Parse SVG
+	icon, err := oksvg.ReadIconStream(strings.NewReader(string(svgData)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SVG: %w", err)
+	}
+
+	// Set reasonable dimensions with higher resolution for quality
+	width, height := icon.ViewBox.W, icon.ViewBox.H
+	if width == 0 || height == 0 {
+		width, height = 512, 512 // Default size for SVGs without dimensions
+	}
+	
+	// Scale up for better quality, then we'll scale down during cropping
+	scale := 2.0
+	renderWidth := int(width * scale)
+	renderHeight := int(height * scale)
+
+	fmt.Printf("Rendering SVG at %.0fx%.0f (2x resolution for quality)\n", width, height)
+
+	// Create raster image with transparent background at higher resolution
+	img := image.NewRGBA(image.Rect(0, 0, renderWidth, renderHeight))
+	
+	// Initialize with transparent background
+	for y := 0; y < renderHeight; y++ {
+		for x := 0; x < renderWidth; x++ {
+			img.Set(x, y, color.RGBA{0, 0, 0, 0}) // Transparent
+		}
+	}
+	
+	// Create scanner and rasterize at higher resolution
+	scanner := rasterx.NewScannerGV(renderWidth, renderHeight, img, img.Bounds())
+	raster := rasterx.NewDasher(renderWidth, renderHeight, scanner)
+	
+	// Set viewbox and draw with scaling
+	icon.SetTarget(0, 0, width*scale, height*scale)
+	icon.Draw(raster, 1.0)
+
+	// Scale down for final image if we scaled up
+	if scale != 1.0 {
+		finalImg := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+		// Simple downsampling
+		for y := 0; y < int(height); y++ {
+			for x := 0; x < int(width); x++ {
+				srcX := int(float64(x) * scale)
+				srcY := int(float64(y) * scale)
+				if srcX < renderWidth && srcY < renderHeight {
+					finalImg.Set(x, y, img.At(srcX, srcY))
+				}
+			}
+		}
+		img = finalImg
+	}
+
+	fmt.Printf("SVG successfully converted to raster image\n")
+	return img, nil
+}
+
+// loadSVGWithScale loads and rasterizes an SVG file with configurable scaling
+func (p *Processor) loadSVGWithScale(path string, scale float32) (image.Image, error) {
+	// Read SVG file
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open SVG file: %w", err)
+	}
+	defer file.Close()
+
+	// Read file content
+	svgData, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read SVG file: %w", err)
+	}
+
+	fmt.Printf("Loading SVG: %d bytes\n", len(svgData))
+
+	// Parse SVG
+	icon, err := oksvg.ReadIconStream(strings.NewReader(string(svgData)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SVG: %w", err)
+	}
+
+	// Set reasonable dimensions with configurable resolution for quality
+	width, height := icon.ViewBox.W, icon.ViewBox.H
+	if width == 0 || height == 0 {
+		width, height = 512, 512 // Default size for SVGs without dimensions
+	}
+	
+	// Clamp scale between 1 and 4 for reasonable performance
+	if scale < 1 {
+		scale = 1
+	}
+	if scale > 4 {
+		scale = 4
+	}
+	
+	renderWidth := int(width * float64(scale))
+	renderHeight := int(height * float64(scale))
+
+	fmt.Printf("Rendering SVG at %.0fx%.0f (%.1fx scale for quality)\n", width, height, scale)
+
+	// Create raster image with transparent background at higher resolution
+	img := image.NewRGBA(image.Rect(0, 0, renderWidth, renderHeight))
+	
+	// Initialize with transparent background
+	for y := 0; y < renderHeight; y++ {
+		for x := 0; x < renderWidth; x++ {
+			img.Set(x, y, color.RGBA{0, 0, 0, 0}) // Transparent
+		}
+	}
+	
+	// Create scanner and rasterize at higher resolution
+	scanner := rasterx.NewScannerGV(renderWidth, renderHeight, img, img.Bounds())
+	raster := rasterx.NewDasher(renderWidth, renderHeight, scanner)
+	
+	// Set viewbox and draw with scaling
+	icon.SetTarget(0, 0, width*float64(scale), height*float64(scale))
+	icon.Draw(raster, 1.0)
+
+	// Scale down for final image if we scaled up
+	if scale != 1.0 {
+		finalImg := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+		// Simple downsampling
+		for y := 0; y < int(height); y++ {
+			for x := 0; x < int(width); x++ {
+				srcX := int(float64(x) * float64(scale))
+				srcY := int(float64(y) * float64(scale))
+				if srcX < renderWidth && srcY < renderHeight {
+					finalImg.Set(x, y, img.At(srcX, srcY))
+				}
+			}
+		}
+		img = finalImg
+	}
+
+	fmt.Printf("SVG successfully converted to raster image\n")
+	return img, nil
+}
+
+// LoadImage loads an image from file, supporting various formats including SVG
 func (p *Processor) LoadImage(path string) (image.Image, error) {
+	// Check if it's an SVG file
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".svg" {
+		return p.loadSVG(path)
+	}
+
+	// Handle regular image formats
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -136,8 +344,6 @@ func (p *Processor) LoadImage(path string) (image.Image, error) {
 	defer file.Close()
 	
 	// Try to decode based on file extension
-	ext := strings.ToLower(filepath.Ext(path))
-	
 	switch ext {
 	case ".png":
 		return png.Decode(file)

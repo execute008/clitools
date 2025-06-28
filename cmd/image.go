@@ -44,9 +44,10 @@ Examples:
 		}
 
 		quality, _ := cmd.Flags().GetFloat32("quality")
-		
+		svgScale, _ := cmd.Flags().GetFloat32("svg-scale")
+
 		processor := image.NewProcessor()
-		err := processor.OptimizeImage(inputPath, outputPath, quality)
+		err := processor.OptimizeImageWithScale(inputPath, outputPath, quality, svgScale)
 		if err != nil {
 			return fmt.Errorf("failed to optimize image: %w", err)
 		}
@@ -58,7 +59,8 @@ Examples:
 
 func init() {
 	imageCmd.AddCommand(optimizeCmd)
-	
+
 	// Add flags
 	optimizeCmd.Flags().Float32P("quality", "q", 80, "WebP quality (0-100)")
+	optimizeCmd.Flags().Float32P("svg-scale", "s", 2, "SVG rendering scale factor for quality (1-4)")
 }
