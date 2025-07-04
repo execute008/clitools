@@ -57,10 +57,66 @@ Examples:
 	},
 }
 
+var scaleCmd = &cobra.Command{
+	Use:   "scale [input] [output]",
+	Short: "Scale/resize images with various options",
+	Long: `Scale or resize images with flexible options:
+- Scale by factor: --factor 0.5 (50% smaller) or --factor 2.0 (2x larger)
+- Set specific dimensions: --width 800 --height 600
+- Fit to width/height maintaining aspect ratio: --width 800 or --height 600
+- Resize with different resampling algorithms for quality
+
+Examples:
+  clitools image scale input.png output.png --factor 0.5
+  clitools image scale input.jpg output.jpg --width 800 --height 600
+  clitools image scale input.webp output.webp --width 1200
+  clitools image scale input.svg output.png --height 400 --algorithm lanczos`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		inputPath := args[0]
+		outputPath := args[1]
+
+		// Get flags
+		factor, _ := cmd.Flags().GetFloat32("factor")
+		width, _ := cmd.Flags().GetInt("width")
+		height, _ := cmd.Flags().GetInt("height")
+		algorithm, _ := cmd.Flags().GetString("algorithm")
+		quality, _ := cmd.Flags().GetFloat32("quality")
+		svgScale, _ := cmd.Flags().GetFloat32("svg-scale")
+
+		// Validate parameters
+		if factor == 0 && width == 0 && height == 0 {
+			return fmt.Errorf("must specify either --factor, --width, or --height")
+		}
+
+		if factor != 0 && (width != 0 || height != 0) {
+			return fmt.Errorf("cannot use --factor with --width or --height")
+		}
+
+		processor := image.NewProcessor()
+		err := processor.ScaleImage(inputPath, outputPath, factor, width, height, algorithm, quality, svgScale)
+		if err != nil {
+			return fmt.Errorf("failed to scale image: %w", err)
+		}
+
+		fmt.Printf("Successfully scaled %s -> %s\n", inputPath, outputPath)
+		return nil
+	},
+}
+
 func init() {
 	imageCmd.AddCommand(optimizeCmd)
+	imageCmd.AddCommand(scaleCmd)
 
-	// Add flags
+	// Add flags for optimize command
 	optimizeCmd.Flags().Float32P("quality", "q", 80, "WebP quality (0-100)")
 	optimizeCmd.Flags().Float32P("svg-scale", "s", 2, "SVG rendering scale factor for quality (1-4)")
+
+	// Add flags for scale command
+	scaleCmd.Flags().Float32P("factor", "f", 0, "Scale factor (e.g., 0.5 for 50%, 2.0 for 200%)")
+	scaleCmd.Flags().IntP("width", "w", 0, "Target width in pixels")
+	scaleCmd.Flags().Int("height", 0, "Target height in pixels")
+	scaleCmd.Flags().StringP("algorithm", "a", "lanczos", "Resampling algorithm: nearest, bilinear, bicubic, lanczos")
+	scaleCmd.Flags().Float32P("quality", "q", 90, "Output quality for JPEG/WebP (0-100)")
+	scaleCmd.Flags().Float32P("svg-scale", "s", 2, "SVG rendering scale factor for quality (1-4)")
 }
